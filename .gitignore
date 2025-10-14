@@ -1,0 +1,18 @@
+# Build outputs
+bin/
+dist/
+build/
+*.exe
+*.out
+*.test
+
+# IDE & tooling
+.vscode/
+.idea/
+.DS_Store
+
+# Env & data
+.env
+data/
+.air.toml
+coverage/
