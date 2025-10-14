@@ -1,0 +1,174 @@
+openapi: 3.0.3
+info:
+  title: LiteDrive API
+  description: 在线网盘后端 API（Go + Gin）。当前覆盖健康检查与用户认证相关接口。
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080
+    description: 本地开发环境
+paths:
+  /health:
+    get:
+      summary: 健康检查
+      tags: [system]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /v1/auth/register:
+    post:
+      summary: 用户注册
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "200":
+          description: 注册成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserInfo"
+        "400":
+          description: 参数错误或冲突
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /v1/auth/login:
+    post:
+      summary: 用户登录
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: JWT 令牌（Bearer）
+        "400":
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: 认证失败
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /v1/me:
+    get:
+      summary: 获取当前用户信息
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserInfo"
+        "401":
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: 用户不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [username, email, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+          example: alice
+        email:
+          type: string
+          format: email
+          example: alice@example.com
+        password:
+          type: string
+          format: password
+          minLength: 6
+          maxLength: 64
+          example: Passw0rd!
+        nickname:
+          type: string
+          example: Alice
+    LoginRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          example: alice
+        email:
+          type: string
+          format: email
+          example: alice@example.com
+        password:
+          type: string
+          format: password
+          example: Passw0rd!
+      oneOf:
+        - required: [username, password]
+        - required: [email, password]
+    UserInfo:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        username:
+          type: string
+          example: alice
+        email:
+          type: string
+          format: email
+          example: alice@example.com
+        nickname:
+          type: string
+          example: Alice
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: message
