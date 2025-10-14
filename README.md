@@ -60,64 +60,13 @@ online-disk-server/
 
 ---
 
-## 快速开始
+## 🛠️ 技术栈验证
 
-1) 安装 Go 依赖（若已初始化 go.mod 可跳过第一步）：
-
-```powershell
-go mod init example.com/online-disk-server
-
-go mod tidy
-```
-
-2) 创建并填写 `.env`（参考上文）。
-
-3) 运行开发服务（示例入口：`cmd/server/main.go`，待你创建）：
-
-```powershell
-go run ./cmd/server
-```
-
-可选：使用 Air 进行热重载（需先安装 `air` 工具）。
-
-```powershell
-go install github.com/air-verse/air@latest
-air init   # 生成 .air.toml（首次）
-air        # 热重载启动
-```
-
-## API 概览（草案）
-
-- Auth
-  - POST /v1/auth/register  注册
-  - POST /v1/auth/login     登录，返回 JWT
-
-- Files
-  - POST   /v1/files/upload         表单上传（支持大文件/分片，后续扩展）
-  - GET    /v1/files/:id/download   下载
-  - GET    /v1/files/:id            获取元信息
-  - DELETE /v1/files/:id            删除（可进回收站）
-
-- Folders
-  - POST /v1/folders                创建文件夹
-  - GET  /v1/folders/:id/list       列出子文件/文件夹
-
-- Shares
-  - POST /v1/shares                 创建分享链接（含权限/有效期）
-  - GET  /v1/shares/:token          通过 token 访问共享内容
-
-建议使用 Swagger/OpenAPI（`api/openapi.yaml`）维护接口规范，并在 Gin 中集成 swagger-ui 以便调试。
-
-## 开发与测试
-
-- 代码风格与检查：建议引入 `golangci-lint`。
-- 单元测试与集成测试：
-
-```powershell
-go test ./...
-```
-
-- 大文件与并发场景建议做基准测试与压测（单机/容器化）。
+- Go + Gin: Web 服务器正常运行
+- MySQL + GORM: 数据库连接和操作正常
+- JWT 认证: 安全认证机制工作正常
+- MinIO S3: 对象存储服务集成成功
+- OpenAPI 文档: API 文档生成和展示正常
 
 ## 部署建议
 
@@ -126,14 +75,3 @@ go test ./...
   - Gin 运行在 `release` 模式，前置 Nginx/Traefik 反代与 HTTPS。
   - 对象存储建议使用 MinIO/S3，避免本地磁盘成为单点。
   - 开启按需的缓存/CDN 加速公开文件。
-
----
-
-## 扩展路线图
-
-- 分片上传与断点续传（S3 分片 API）
-- 内容去重（文件 Hash，秒传）
-- 缩略图/预览（图片/视频转码，异步任务）
-- WebDAV 协议支持
-- 角色/权限（RBAC / ACL）与审计日志
-- 多租户/空间配额

@@ -1,8 +1,28 @@
 openapi: 3.0.3
 info:
   title: LiteDrive API
-  description: 在线网盘后端 API（Go + Gin）。当前覆盖健康检查与用户认证相关接口。
-  version: 0.1.0
+  description: |
+    LiteDrive 在线网盘后端 API（Go + Gin + S3）
+
+    ## 功能特性
+    - 🔐 用户认证（JWT）
+    - 📁 文件上传/下载
+    - 📂 文件夹管理
+    - 🗂️ 文件列表/搜索
+    - 🗄️ S3 兼容存储（支持 MinIO）
+    - 🔒 用户隔离与权限控制
+
+    ## 认证说明
+    除了公开端点外，所有API都需要在请求头中携带JWT token：
+    ```
+    Authorization: Bearer YOUR_JWT_TOKEN
+    ```
+  version: 1.0.0
+  contact:
+    name: LiteDrive Team
+    url: https://github.com/ptsfdtz/LiteDrive
+  license:
+    name: MIT
 servers:
   - url: http://localhost:8080
     description: 本地开发环境
@@ -103,6 +123,311 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /v1/files/upload:
+    post:
+      summary: 文件上传
+      tags: [files]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: overwrite
+          in: query
+          description: 是否覆盖同名文件
+          schema:
+            type: boolean
+            default: false
+        - name: parent_id
+          in: query
+          description: 父文件夹ID（可选，优先级高于path参数）
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 要上传的文件
+                path:
+                  type: string
+                  description: 上传路径，默认为根目录
+                  example: "/documents/"
+                  default: "/"
+                description:
+                  type: string
+                  description: 文件描述（可选）
+                  maxLength: 500
+                is_public:
+                  type: boolean
+                  description: 是否设为公开文件
+                  default: false
+      responses:
+        "200":
+          description: 上传成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileInfo"
+        "400":
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /v1/files:
+    get:
+      summary: 获取文件列表
+      tags: [files]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          description: 页码
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: 每页条数
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: path
+          in: query
+          description: 文件夹路径
+          schema:
+            type: string
+            example: "/documents"
+        - name: parent_id
+          in: query
+          description: 父文件夹ID（0表示根目录）
+          schema:
+            type: integer
+            format: int64
+            default: 0
+        - name: type
+          in: query
+          description: 文件类型过滤
+          schema:
+            type: string
+            enum: [all, file, folder]
+            default: all
+        - name: search
+          in: query
+          description: 搜索关键词（文件名）
+          schema:
+            type: string
+            maxLength: 100
+        - name: sort_by
+          in: query
+          description: 排序字段
+          schema:
+            type: string
+            enum: [name, size, created_at, updated_at]
+            default: updated_at
+        - name: sort_order
+          in: query
+          description: 排序顺序
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileListResponse"
+        "401":
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /v1/files/{id}:
+    get:
+      summary: 获取文件详细信息
+      tags: [files]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 文件ID
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileInfo"
+        "401":
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: 文件不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      summary: 删除文件
+      tags: [files]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 文件ID
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "file deleted successfully"
+        "401":
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: 文件不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /v1/files/{id}/download:
+    get:
+      summary: 下载文件
+      tags: [files]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 文件ID
+          schema:
+            type: integer
+            format: int64
+        - name: inline
+          in: query
+          description: 是否内联显示（而非下载）
+          schema:
+            type: boolean
+            default: false
+        - name: thumbnail
+          in: query
+          description: 是否返回缩略图（仅支持图片）
+          schema:
+            type: boolean
+            default: false
+        - name: quality
+          in: query
+          description: 缩略图质量（1-100）
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 80
+      responses:
+        "200":
+          description: 文件内容
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: 文件不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /v1/folders:
+    post:
+      summary: 创建文件夹
+      tags: [folders]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: recursive
+          in: query
+          description: 是否递归创建父目录
+          schema:
+            type: boolean
+            default: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateFolderRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileInfo"
+        "400":
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: 文件夹已存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   securitySchemes:
     bearerAuth:
@@ -172,3 +497,105 @@ components:
         error:
           type: string
           example: message
+    FileInfo:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-10-14T14:37:56.591026+08:00"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2025-10-14T14:37:56.591026+08:00"
+        name:
+          type: string
+          example: "test.txt"
+        path:
+          type: string
+          example: "/test.txt"
+        size:
+          type: integer
+          format: int64
+          example: 1024
+          description: 文件大小（字节）
+        mime_type:
+          type: string
+          example: "text/plain"
+          description: MIME 类型
+        hash:
+          type: string
+          example: "09e7ab13a4948b9625eb763391288c36"
+          description: 文件哈希值（MD5）
+        user_id:
+          type: integer
+          format: int64
+          example: 1
+        parent_id:
+          type: integer
+          format: int64
+          example: 0
+          description: 父文件夹ID，0表示根目录
+        storage_path:
+          type: string
+          example: "files/1/09e7ab13a4948b9625eb763391288c36.txt"
+          description: 存储路径
+        is_dir:
+          type: boolean
+          example: false
+          description: 是否为文件夹
+        is_public:
+          type: boolean
+          example: false
+          description: 是否公开
+    FileListResponse:
+      type: object
+      properties:
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/FileInfo"
+        page:
+          type: integer
+          example: 1
+          description: 当前页码
+        limit:
+          type: integer
+          example: 20
+          description: 每页条数
+        total:
+          type: integer
+          example: 100
+          description: 总条数
+    CreateFolderRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: "documents"
+          description: 文件夹名称
+          minLength: 1
+          maxLength: 255
+        path:
+          type: string
+          example: "/"
+          description: 父路径
+          default: "/"
+        parent_id:
+          type: integer
+          format: int64
+          description: 父文件夹ID（优先级高于path参数）
+          example: 0
+        description:
+          type: string
+          description: 文件夹描述
+          maxLength: 500
+        is_public:
+          type: boolean
+          description: 是否设为公开文件夹
+          default: false
