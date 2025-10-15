@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"online-disk-server/internal/middleware"
 	"online-disk-server/internal/service"
@@ -29,9 +30,31 @@ func (h *FileHandler) Upload(c *gin.Context) {
 
 	uid := userID.(uint)
 
-	// 获取父目录ID（可选）
+	// 优先支持 path 参数
 	parentID := uint(0)
-	if pid := c.DefaultPostForm("parent_id", "0"); pid != "0" {
+	path := c.DefaultPostForm("path", c.DefaultQuery("path", ""))
+	if path != "" {
+		// 递归查找/创建目录，每一级都用 FindOrCreateFolder，保证 parent_id 递归正确
+		parts := strings.Split(strings.Trim(path, "/"), "/")
+		var fullPathBuilder strings.Builder
+		fullPathBuilder.WriteString("/")
+		for idx, p := range parts {
+			if p == "" || p == "." || p == ".." {
+				continue
+			}
+			if idx > 0 {
+				fullPathBuilder.WriteString("/")
+			}
+			fullPathBuilder.WriteString(p)
+			fullPath := fullPathBuilder.String()
+			folder, err := h.fileService.FindOrCreateFolder(uid, parentID, p, fullPath)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "create/find folder failed: " + err.Error()})
+				return
+			}
+			parentID = folder.ID
+		}
+	} else if pid := c.DefaultPostForm("parent_id", c.DefaultQuery("parent_id", "0")); pid != "0" {
 		if id, err := strconv.ParseUint(pid, 10, 32); err == nil {
 			parentID = uint(id)
 		}
@@ -52,6 +75,58 @@ func (h *FileHandler) Upload(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, uploadedFile)
+}
+
+// BatchUpload 批量上传文件，支持相对路径（来自前端 webkitRelativePath）
+func (h *FileHandler) BatchUpload(c *gin.Context) {
+	userID, exists := c.Get(middleware.CtxUserID)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	uid := userID.(uint)
+
+	parentID := uint(0)
+	if pid := c.DefaultPostForm("parent_id", "0"); pid != "0" {
+		if id, err := strconv.ParseUint(pid, 10, 32); err == nil {
+			parentID = uint(id)
+		}
+	}
+
+	// 解析 multipart 表单
+	if err := c.Request.ParseMultipartForm(64 << 20); err != nil { // 64MB 内存阈值
+		// 即使超出会使用临时文件，不影响整体
+	}
+
+	form, err := c.MultipartForm()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid multipart form"})
+		return
+	}
+
+	files := form.File["files"]
+	if len(files) == 0 {
+		// 兼容部分前端字段名为 file
+		files = form.File["file"]
+	}
+	if len(files) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no files uploaded"})
+		return
+	}
+
+	relPaths := form.Value["relative_paths"]
+	// 若前端按每个文件提供 single relative_paths 字段，也尝试读取
+	if len(relPaths) == 0 {
+		relPaths = form.Value["relative_path"]
+	}
+
+	uploaded, err := h.fileService.UploadFilesWithRelativePaths(uid, files, relPaths, parentID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"files": uploaded, "count": len(uploaded)})
 }
 
 // Download 文件下载
@@ -119,7 +194,21 @@ func (h *FileHandler) List(c *gin.Context) {
 
 	uid := userID.(uint)
 	parentID := uint(0)
-	if pid := c.DefaultQuery("parent_id", "0"); pid != "0" {
+	path := c.Query("path")
+	if path != "" {
+		dir, err := h.fileService.FindDirByPath(uid, path)
+		if err != nil {
+			// 路径不存在，返回空列表
+			c.JSON(http.StatusOK, gin.H{
+				"files": []interface{}{},
+				"total": 0,
+				"page":  1,
+				"limit": 20,
+			})
+			return
+		}
+		parentID = dir.ID
+	} else if pid := c.DefaultQuery("parent_id", "0"); pid != "0" {
 		if id, err := strconv.ParseUint(pid, 10, 32); err == nil {
 			parentID = uint(id)
 		}
@@ -186,6 +275,7 @@ func (h *FileHandler) CreateFolder(c *gin.Context) {
 	var req struct {
 		Name     string `json:"name" binding:"required"`
 		ParentID uint   `json:"parent_id"`
+		Path     string `json:"path"` // 新增 path 字段
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -193,7 +283,30 @@ func (h *FileHandler) CreateFolder(c *gin.Context) {
 		return
 	}
 
-	folder, err := h.fileService.CreateFolder(uid, req.Name, req.ParentID)
+	parentID := req.ParentID
+	if req.Path != "" {
+		parts := strings.Split(strings.Trim(req.Path, "/"), "/")
+		var fullPathBuilder strings.Builder
+		fullPathBuilder.WriteString("/")
+		for idx, p := range parts {
+			if p == "" || p == "." || p == ".." {
+				continue
+			}
+			if idx > 0 {
+				fullPathBuilder.WriteString("/")
+			}
+			fullPathBuilder.WriteString(p)
+			fullPath := fullPathBuilder.String()
+			folder, err := h.fileService.FindOrCreateFolder(uid, parentID, p, fullPath)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "create/find parent folder failed: " + err.Error()})
+				return
+			}
+			parentID = folder.ID
+		}
+	}
+
+	folder, err := h.fileService.CreateFolder(uid, req.Name, parentID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

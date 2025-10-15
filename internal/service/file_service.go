@@ -50,7 +50,8 @@ func (s *FileService) UploadFile(userID uint, file *multipart.FileHeader, parent
 	src.Seek(0, io.SeekStart)
 
 	// 生成存储路径
-	ext := filepath.Ext(file.Filename)
+	baseName := filepath.Base(file.Filename) // 避免包含相对路径
+	ext := filepath.Ext(baseName)
 	storagePath := fmt.Sprintf("files/%d/%s%s", userID, hashStr, ext)
 
 	// 上传到存储
@@ -60,8 +61,8 @@ func (s *FileService) UploadFile(userID uint, file *multipart.FileHeader, parent
 
 	// 创建文件记录
 	fileModel := &model.File{
-		Name:        file.Filename,
-		Path:        "/" + strings.TrimPrefix(file.Filename, "/"),
+		Name:        baseName,
+		Path:        "/" + strings.TrimPrefix(baseName, "/"),
 		Size:        size,
 		MimeType:    file.Header.Get("Content-Type"),
 		Hash:        hashStr,
@@ -125,9 +126,27 @@ func (s *FileService) DeleteFile(userID, fileID uint) error {
 
 // CreateFolder 创建文件夹
 func (s *FileService) CreateFolder(userID uint, name string, parentID uint) (*model.File, error) {
+	parentPath := ""
+	if parentID != 0 {
+		parent, err := s.fileRepo.FindByIDAndUser(parentID, userID)
+		if err != nil {
+			return nil, err
+		}
+		parentPath = parent.Path
+	}
+	var fullPath string
+	if parentPath == "" || parentPath == "/" {
+		fullPath = "/" + strings.TrimPrefix(name, "/")
+	} else {
+		fullPath = parentPath
+		if !strings.HasSuffix(fullPath, "/") {
+			fullPath += "/"
+		}
+		fullPath += strings.TrimPrefix(name, "/")
+	}
 	folder := &model.File{
 		Name:     name,
-		Path:     "/" + strings.TrimPrefix(name, "/"),
+		Path:     fullPath,
 		Size:     0,
 		UserID:   userID,
 		ParentID: parentID,
@@ -139,4 +158,77 @@ func (s *FileService) CreateFolder(userID uint, name string, parentID uint) (*mo
 	}
 
 	return folder, nil
+}
+
+// UploadFilesWithRelativePaths 批量上传文件（带相对路径），自动创建中间文件夹
+// 参数：
+// - files: 来自 multipart 的文件列表
+// - relPaths: 与 files 按索引一一对应的相对路径（例如 "sub/dir/file.txt"），可为空字符串
+// - parentID: 作为起始父目录ID（0 为根）
+func (s *FileService) UploadFilesWithRelativePaths(userID uint, files []*multipart.FileHeader, relPaths []string, parentID uint) ([]*model.File, error) {
+	result := make([]*model.File, 0, len(files))
+
+	for i, fh := range files {
+		rel := ""
+		if i < len(relPaths) {
+			rel = relPaths[i]
+		}
+
+		// 解析相对路径中的目录和文件名
+		rel = filepath.ToSlash(strings.TrimPrefix(rel, "/"))
+		dirPart := filepath.Dir(rel)
+		baseName := filepath.Base(rel)
+		if baseName == "." || baseName == "" || baseName == ".." {
+			// fallback 到上传文件名
+			baseName = filepath.Base(fh.Filename)
+		}
+
+		// 逐级确保目录存在
+		currentParent := parentID
+		if dirPart != "." && dirPart != "" {
+			parts := strings.Split(dirPart, "/")
+			var fullPathBuilder strings.Builder
+			fullPathBuilder.WriteString("/")
+			for idx, p := range parts {
+				if p == "" || p == "." || p == ".." {
+					continue
+				}
+				if idx > 0 {
+					fullPathBuilder.WriteString("/")
+				}
+				fullPathBuilder.WriteString(p)
+
+				fullPath := fullPathBuilder.String()
+				folder, err := s.fileRepo.FindOrCreateFolder(userID, currentParent, p, fullPath)
+				if err != nil {
+					return nil, err
+				}
+				currentParent = folder.ID
+			}
+		}
+
+		// 为当前文件构造一个新的 FileHeader，保持原内容，但名称使用 baseName
+		// Gin 的 FileHeader 中 Filename 影响我们保存的显示名称
+		// 直接修改 fh.Filename 不会影响底层内容
+		originalName := fh.Filename
+		fh.Filename = baseName
+		f, err := s.UploadFile(userID, fh, currentParent)
+		// 恢复原始名字以避免副作用（尽管生命周期仅此处）
+		fh.Filename = originalName
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, f)
+	}
+	return result, nil
+}
+
+// FindDirByPath 递归查找 path 下的目录节点
+func (s *FileService) FindDirByPath(userID uint, path string) (*model.File, error) {
+	return s.fileRepo.FindDirByPath(userID, path)
+}
+
+// FindOrCreateFolder 递归查找或创建目录
+func (s *FileService) FindOrCreateFolder(userID, parentID uint, name, fullPath string) (*model.File, error) {
+	return s.fileRepo.FindOrCreateFolder(userID, parentID, name, fullPath)
 }

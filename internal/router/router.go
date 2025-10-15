@@ -71,6 +71,7 @@ func Register(r *gin.Engine) {
 
 			// file management
 			v1auth.POST("/files/upload", fileHandler.Upload)
+			v1auth.POST("/files/batch-upload", fileHandler.BatchUpload)
 			v1auth.GET("/files", fileHandler.List)
 			v1auth.GET("/files/:id", fileHandler.GetInfo)
 			v1auth.GET("/files/:id/download", fileHandler.Download)

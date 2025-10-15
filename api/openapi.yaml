@@ -136,9 +136,16 @@ paths:
           schema:
             type: boolean
             default: false
+        - name: path
+          in: query
+          description: |
+            文件夹路径（如 "/documents"），优先生效，支持多级目录。若 path 存在则忽略 parent_id。
+          schema:
+            type: string
+            example: "/documents"
         - name: parent_id
           in: query
-          description: 父文件夹ID（可选，优先级高于path参数）
+          description: 父文件夹ID（可选，若未传 path 时生效）
           schema:
             type: integer
             format: int64
@@ -186,6 +193,68 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /v1/files/batch-upload:
+    post:
+      summary: 批量上传文件（带相对路径）
+      description: |
+        支持浏览器选择整个文件夹（webkitdirectory），前端将每个文件的相对路径作为 `relative_paths[]` 传递。
+        服务器按相对路径自动创建中间文件夹并保存文件。
+      tags: [files]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: parent_id
+          in: query
+          description: 起始父文件夹ID（默认 0 为根目录）
+          schema:
+            type: integer
+            format: int64
+            default: 0
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files:
+                  type: array
+                  description: 要上传的文件数组
+                  items:
+                    type: string
+                    format: binary
+                relative_paths:
+                  type: array
+                  description: 与 files 一一对应的相对路径（如 "docs/a/b.txt"）
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: 上传成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FileInfo"
+                  count:
+                    type: integer
+        "400":
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: 未认证
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /v1/files:
     get:
       summary: 获取文件列表
@@ -210,13 +279,14 @@ paths:
             default: 20
         - name: path
           in: query
-          description: 文件夹路径
+          description: |
+            文件夹路径（如 "/documents"），优先生效，支持多级目录。若 path 存在则忽略 parent_id。
           schema:
             type: string
             example: "/documents"
         - name: parent_id
           in: query
-          description: 父文件夹ID（0表示根目录）
+          description: 父文件夹ID（0表示根目录，若未传 path 时生效）
           schema:
             type: integer
             format: int64
@@ -402,7 +472,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateFolderRequest"
+              allOf:
+                - $ref: "#/components/schemas/CreateFolderRequest"
+                - type: object
+                  properties:
+                    path:
+                      type: string
+                      description: 父目录路径（如 "/a/b"，优先生效，支持多级目录递归创建）
+                      example: "/a/b"
       responses:
         "200":
           description: 创建成功
